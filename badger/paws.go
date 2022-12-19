@@ -24,17 +24,21 @@ type Paws struct {
 }
 
 type Settings struct {
-	LocalWeb         string   `hcl:"localweb,optional"`
-	LocalPath        string   `hcl:"localpath,optional"`
-	LocalInterface   string   `hcl:"localinterface,optional"`
-	GitLabPath       string   `hcl:"gitlabpath,optional"`
-	GitHubPath       string   `hcl:"githubpath,optional"`
-	Priority         string   `hcl:"priority"`
-	Region           string   `hcl:"region"`
-	Datacenter       string   `hcl:"datacenter"`
-	PathTo           string   `hcl:"pathto"`
-	DefaultContainer string   `hcl:"default_container"`
-	Environments     []string `hcl:"environments"`
+	LocalWeb         string        `hcl:"localweb,optional"`
+	LocalPath        string        `hcl:"localpath,optional"`
+	LocalInterface   string        `hcl:"localinterface,optional"`
+	GitLabPath       string        `hcl:"gitlabpath,optional"`
+	GitHubPath       string        `hcl:"githubpath,optional"`
+	PathTo           string        `hcl:"pathto"`
+	DefaultContainer string        `hcl:"default_container"`
+	Environment      []Environment `hcl:"environment,block"`
+}
+
+type Environment struct {
+	Name       string `hcl:"name,label"`
+	Priority   string `hcl:"priority"`
+	Region     string `hcl:"region"`
+	Datacenter string `hcl:"datacenter"`
 }
 
 type Stages struct {
@@ -80,15 +84,36 @@ func main() {
 	if action == "run" {
 		localonly := false
 		log.Printf("Section is %s", section)
+
+		var pri int
+		var region string
+		var datacenter string
+
+		for _, env := range Paws.Default.Environment {
+			if env.Name == "remote" {
+				pri, _ = strconv.Atoi(env.Priority)
+				region = env.Region
+				datacenter = env.Datacenter
+			}
+		}
+
 		if Paws.Default.LocalPath != "" {
 			localZip(Paws)
+			for _, env := range Paws.Default.Environment {
+				if env.Name == "local" {
+					pri, _ = strconv.Atoi(env.Priority)
+					region = env.Region
+					datacenter = env.Datacenter
+				}
+			}
 			localonly = true
 		}
+
 		id := uuid.New()
 		idn := fmt.Sprintf("%s-badger-paws", id.String())
-		pri, _ := strconv.Atoi(Paws.Default.Priority)
-		nbj := nomad.NewBatchJob(idn, idn, Paws.Default.Region, pri)
-		nbj.AddDatacenter(Paws.Default.Datacenter)
+
+		nbj := nomad.NewBatchJob(idn, idn, region, pri)
+		nbj.AddDatacenter(datacenter)
 		sctp := strings.Split(section, ".")
 		var groupselect string = sctp[0]
 		var subgroupselect string = "NONE"

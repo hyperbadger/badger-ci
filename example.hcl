@@ -6,10 +6,16 @@ settings {
         gitlabpath = "https://gitlab.com/hyperbadger/ci/library/-/archive/{VERSION}/library-{VERSION}.zip"
         githubpath = "https://github.com/hyperbadger/ci/library/archive/refs/heads/{VERSION}.zip"
         default_container = "somecontainerwithpython:latest"
-        environments = ["local","remote"]
-        region = "global"
-        priority = "50"
-        datacenter = "dc1"
+        environment "local" {
+            region = "global"
+            priority = "50"
+            datacenter = "dc1"
+        }
+        environment "remote" {
+            region = "global"
+            priority = "50"
+            datacenter = "dc1"
+        }
 }
 
 stage "test" "formatting" {
