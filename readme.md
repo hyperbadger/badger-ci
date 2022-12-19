@@ -16,7 +16,6 @@ paws example.hcl run test
 
 ### KNOWN ISSUES
 The filter for running sub-sections doesn't work
-We might want to tweek the number of runs (i.e. run only once per task)
 Haven't tested or implemented remote CI i.e. gitlab/github.
 Environments are ignored so no filtering local/remote when running.
 

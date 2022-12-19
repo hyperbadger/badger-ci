@@ -94,7 +94,15 @@ func main() {
 			if contains(sctp, stage.Group) || contains(sctp, stage.SubGroup) {
 				groupname := fmt.Sprintf("%s.%s", stage.Group, stage.SubGroup)
 				ntg := nomad.NewTaskGroup(groupname, 1)
+				var attempts int = 0
+				ntg.ReschedulePolicy = &nomad.ReschedulePolicy{
+					Attempts: &attempts,
+				}
+				ntg.RestartPolicy = &nomad.RestartPolicy{
+					Attempts: &attempts,
+				}
 				nbj.AddTaskGroup(ntg)
+
 				for _, step := range stage.Steps {
 					dTask := nomad.NewTask(step.Name, step.Driver.Name)
 
