@@ -17,17 +17,17 @@ stage "test" "formatting" {
         driver "docker" {
             container = "mercutiodesign/docker-black:latest"
         }
-        command = ["/usr/local/bin/black", "/code/"]
+        command = ["/usr/local/bin/black", "/local/code/index-api/"]
         environments = ["local","remote"]
-        pathto = "/code"
+        pathto = "/local/code/"
     }
     step "runpylint" {
         driver "docker" {
             container = "cytopia/pylint:latest"
         }
-        command = ["pylint", "test"]
+        command = ["pylint", "/local/usr/src/index-api/"]
         environments = ["local","remote"]
-        pathto = "/usr/src"
+        pathto = "/local/usr/src/"
     }
 }
 
@@ -36,18 +36,18 @@ stage "test" "testing" {
         driver "docker" {
             container = "safesecurity/pytest:latest"
         }
-        command = ["pytest","/usr/src"]
+        command = ["pytest","/local/usr/src/index-api/tests"]
         environments = ["local"]
-        pathto = "/usr/src"
+        pathto = "/local/usr/src/"
     }
     step "functest" {
         driver "docker" {
             container = "safesecurity/pytest:latest"
         }
-        command = ["pytest","/usr/src"]
+        command = ["pytest","/local/usr/src/index-api/tests"]
         deployment = "functest_deployment"
         environments = ["remote"]
-        pathto = "/usr/src"
+        pathto = "/local/usr/src/"
     }
 }
 
