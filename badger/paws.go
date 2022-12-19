@@ -50,6 +50,7 @@ type Steps struct {
 	Environments []string `hcl:"environments"`
 	Deployment   string   `hcl:"deployment,optional"`
 	PathTo       string   `hcl:"pathto,optional"`
+	WorkDir      string   `hcl:"workdir,optional"`
 }
 
 type Driver struct {
@@ -114,11 +115,20 @@ func main() {
 								RelativeDest: &destination,
 							},
 						}
+						sourcedata := strings.Join(step.Command, "\n")
+						destpath := "local/run.sh"
+						dTask.Templates = []*nomad.Template{
+							&nomad.Template{
+								EmbeddedTmpl: &sourcedata,
+								DestPath:     &destpath,
+							},
+						}
 					}
 					dTaskCfg := make(map[string]interface{})
 					if step.Driver.Name == "docker" {
 						dTaskCfg["image"] = step.Driver.Container
-						dTaskCfg["entrypoint"] = step.Command
+						dTaskCfg["entrypoint"] = []string{"/bin/sh", "/local/run.sh"}
+						dTaskCfg["work_dir"] = step.WorkDir
 
 					}
 					if step.Driver.Name == "raw_exec" {
