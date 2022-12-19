@@ -90,62 +90,71 @@ func main() {
 		nbj := nomad.NewBatchJob(idn, idn, Paws.Default.Region, pri)
 		nbj.AddDatacenter(Paws.Default.Datacenter)
 		sctp := strings.Split(section, ".")
+		var groupselect string = sctp[0]
+		var subgroupselect string = "NONE"
+		var minnumgroup int = 1
+		if len(sctp) > minnumgroup {
+			subgroupselect = sctp[1]
+
+		}
 		for _, stage := range Paws.Stage {
-			if contains(sctp, stage.Group) || contains(sctp, stage.SubGroup) {
-				groupname := fmt.Sprintf("%s.%s", stage.Group, stage.SubGroup)
-				ntg := nomad.NewTaskGroup(groupname, 1)
-				var attempts int = 0
-				ntg.ReschedulePolicy = &nomad.ReschedulePolicy{
-					Attempts: &attempts,
-				}
-				ntg.RestartPolicy = &nomad.RestartPolicy{
-					Attempts: &attempts,
-				}
-				nbj.AddTaskGroup(ntg)
-
-				for _, step := range stage.Steps {
-					dTask := nomad.NewTask(step.Name, step.Driver.Name)
-
-					if localonly {
-
-						localweb := Paws.Default.LocalWeb
-						localip := GetInternalIP(Paws.Default.LocalInterface)
-
-						source := fmt.Sprintf("%s/artifact.zip", strings.Replace(localweb, "{IP}", localip, 1))
-						var destination string = Paws.Default.PathTo
-						if step.PathTo != "" {
-							destination = step.PathTo
-						}
-						log.Printf("source: %v", source)
-						dTask.Artifacts = []*nomad.TaskArtifact{
-							&nomad.TaskArtifact{
-								GetterSource: &source,
-								RelativeDest: &destination,
-							},
-						}
-						sourcedata := strings.Join(step.Command, "\n")
-						destpath := "local/run.sh"
-						dTask.Templates = []*nomad.Template{
-							&nomad.Template{
-								EmbeddedTmpl: &sourcedata,
-								DestPath:     &destpath,
-							},
-						}
+			if groupselect == stage.Group {
+				if (subgroupselect == "NONE") || (subgroupselect == stage.SubGroup) {
+					groupname := fmt.Sprintf("%s.%s", stage.Group, stage.SubGroup)
+					ntg := nomad.NewTaskGroup(groupname, 1)
+					var attempts int = 0
+					ntg.ReschedulePolicy = &nomad.ReschedulePolicy{
+						Attempts: &attempts,
 					}
-					dTaskCfg := make(map[string]interface{})
-					if step.Driver.Name == "docker" {
-						dTaskCfg["image"] = step.Driver.Container
-						dTaskCfg["entrypoint"] = []string{"/bin/sh", "/local/run.sh"}
-						dTaskCfg["work_dir"] = step.WorkDir
-
+					ntg.RestartPolicy = &nomad.RestartPolicy{
+						Attempts: &attempts,
 					}
-					if step.Driver.Name == "raw_exec" {
-						dTaskCfg["command"] = step.Driver.Shell
-						dTaskCfg["args"] = step.Command
-					}
+					nbj.AddTaskGroup(ntg)
 
-					dTask.Config = dTaskCfg
-					ntg.AddTask(dTask)
+					for _, step := range stage.Steps {
+						dTask := nomad.NewTask(step.Name, step.Driver.Name)
+
+						if localonly {
+
+							localweb := Paws.Default.LocalWeb
+							localip := GetInternalIP(Paws.Default.LocalInterface)
+
+							source := fmt.Sprintf("%s/artifact.zip", strings.Replace(localweb, "{IP}", localip, 1))
+							var destination string = Paws.Default.PathTo
+							if step.PathTo != "" {
+								destination = step.PathTo
+							}
+							log.Printf("source: %v", source)
+							dTask.Artifacts = []*nomad.TaskArtifact{
+								&nomad.TaskArtifact{
+									GetterSource: &source,
+									RelativeDest: &destination,
+								},
+							}
+							sourcedata := strings.Join(step.Command, "\n")
+							destpath := "local/run.sh"
+							dTask.Templates = []*nomad.Template{
+								&nomad.Template{
+									EmbeddedTmpl: &sourcedata,
+									DestPath:     &destpath,
+								},
+							}
+						}
+						dTaskCfg := make(map[string]interface{})
+						if step.Driver.Name == "docker" {
+							dTaskCfg["image"] = step.Driver.Container
+							dTaskCfg["entrypoint"] = []string{"/bin/sh", "/local/run.sh"}
+							dTaskCfg["work_dir"] = step.WorkDir
+
+						}
+						if step.Driver.Name == "raw_exec" {
+							dTaskCfg["command"] = step.Driver.Shell
+							dTaskCfg["args"] = step.Command
+						}
+
+						dTask.Config = dTaskCfg
+						ntg.AddTask(dTask)
+					}
 				}
 			}
 

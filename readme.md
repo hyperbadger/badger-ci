@@ -3,24 +3,29 @@
 Using a HCL CI file you can run this independent of your GIT environment in either a local or remote context. all you need is a nomad orchestration engine.
 
 ### BOOTSTRAP AND BUILD
+
+```
 go mod tidy
 go build badger/paws.go
+```
 
 ### PREREQS
 install nginx, docker, nomad (follow the guides)
 
+```
 ./startup.sh 
+```
 
 ### EXAMPLE COMMAND
 paws example.hcl run test
 
 ### KNOWN ISSUES
-The filter for running sub-sections doesn't work
-Haven't tested or implemented remote CI i.e. gitlab/github.
-Environments are ignored so no filtering local/remote when running.
+- Haven't tested or implemented remote CI i.e. gitlab/github.
+- Environments are ignored so no filtering local/remote when running.
 
 ### EXAMPLE HCL CONFIG
 
+```
 settings {
         pathto = "/code"
         localweb = "http://{IP}:80/files"
@@ -77,3 +82,4 @@ stage "test" "testing" {
 deployment "functest_deployment" {
     pack = "somepack.nomad"
 }
+```
