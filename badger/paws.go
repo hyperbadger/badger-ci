@@ -44,6 +44,7 @@ type Environment struct {
 type Stages struct {
 	Group    string  `hcl:"group,label"`
 	SubGroup string  `hcl:"subgroup,label"`
+	Include  string  `hcl:"include,optional"`
 	Steps    []Steps `hcl:"step,block"`
 }
 
@@ -55,6 +56,10 @@ type Steps struct {
 	Deployment   string   `hcl:"deployment,optional"`
 	PathTo       string   `hcl:"pathto,optional"`
 	WorkDir      string   `hcl:"workdir,optional"`
+}
+
+type StepsCollection struct {
+	Steps []Steps `hcl:"step,block"`
 }
 
 type Driver struct {
@@ -75,11 +80,29 @@ func main() {
 	var action = args[1]
 	var section = args[2]
 
-	var Paws Paws
-	err := hclsimple.DecodeFile(pawfile, nil, &Paws)
+	var PawsTemp Paws
+	err := hclsimple.DecodeFile(pawfile, nil, &PawsTemp)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %s", err)
 	}
+
+	for i, includes := range PawsTemp.Stage {
+		if includes.Include != "" {
+			var SC StepsCollection
+			err := hclsimple.DecodeFile(includes.Include, nil, &SC)
+			if err != nil {
+				log.Fatalf("Failed to load configuration: %s", err)
+			}
+			log.Printf("Include found %#v", SC.Steps)
+			for _, step := range SC.Steps {
+				PawsTemp.Stage[i].Steps = append(PawsTemp.Stage[i].Steps, step)
+			}
+		}
+	}
+
+	var Paws Paws
+	Paws = PawsTemp
+
 	log.Printf("Configuration is %#v", Paws)
 	if action == "run" {
 		localonly := false
