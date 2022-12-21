@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -73,6 +74,7 @@ type Deployment struct {
 	Pack           string `hcl:"pack"`
 }
 
+// Main Entrypoint into Paws
 func main() {
 	args := os.Args[1:]
 
@@ -80,6 +82,22 @@ func main() {
 	var action = args[1]
 	var section = args[2]
 
+	switch action {
+	case "run":
+		pawsrunprocess(pawfile, action, section, false)
+	case "valid":
+		JSON, err := json.MarshalIndent(pawsconfig(pawfile), "", "  ")
+		if err != nil {
+			log.Fatalf("Failed to parse configuration: %s", pawfile)
+		}
+		log.Printf(string(JSON))
+	default:
+		log.Printf("Unknown mode: %s", action)
+	}
+}
+
+// Parses Configuration File, pulls in includes and merges
+func pawsconfig(pawfile string) Paws {
 	var PawsTemp Paws
 	err := hclsimple.DecodeFile(pawfile, nil, &PawsTemp)
 	if err != nil {
@@ -93,120 +111,157 @@ func main() {
 			if err != nil {
 				log.Fatalf("Failed to load configuration: %s", err)
 			}
-			log.Printf("Include found %#v", SC.Steps)
+			//log.Printf("Include found %#v", SC.Steps)
 			for _, step := range SC.Steps {
 				PawsTemp.Stage[i].Steps = append(PawsTemp.Stage[i].Steps, step)
 			}
 		}
 	}
 
-	var Paws Paws
-	Paws = PawsTemp
+	return PawsTemp
+}
+
+// Get Priority from any defined environments
+func envpriority(Paws Paws, environ string) int {
+	var pri int
+	for _, env := range Paws.Default.Environment {
+		if env.Name == environ {
+			pri, _ = strconv.Atoi(env.Priority)
+		}
+	}
+	return pri
+}
+
+// Get Region from any defined environments
+func envregion(Paws Paws, environ string) string {
+	var region string
+	for _, env := range Paws.Default.Environment {
+		if env.Name == environ {
+			region = env.Region
+		}
+	}
+	return region
+}
+
+// Get Datacenter from any defined environments
+func envdc(Paws Paws, environ string) string {
+	var dc string
+	for _, env := range Paws.Default.Environment {
+		if env.Name == environ {
+			dc = env.Datacenter
+		}
+	}
+	return dc
+}
+
+// Adding a task to the nomad job, if it's local it does something slightly different
+func addPawsTask(Paws Paws, step Steps, ntg *nomad.TaskGroup, localonly bool) {
+	dTask := nomad.NewTask(step.Name, step.Driver.Name)
+
+	if localonly {
+
+		localweb := Paws.Default.LocalWeb
+		localip := GetInternalIP(Paws.Default.LocalInterface)
+
+		source := fmt.Sprintf("%s/artifact.zip", strings.Replace(localweb, "{IP}", localip, 1))
+		var destination string = Paws.Default.PathTo
+		if step.PathTo != "" {
+			destination = step.PathTo
+		}
+		log.Printf("source: %v", source)
+		dTask.Artifacts = []*nomad.TaskArtifact{
+			&nomad.TaskArtifact{
+				GetterSource: &source,
+				RelativeDest: &destination,
+			},
+		}
+		sourcedata := strings.Join(step.Command, "\n")
+		destpath := "local/run.sh"
+		dTask.Templates = []*nomad.Template{
+			&nomad.Template{
+				EmbeddedTmpl: &sourcedata,
+				DestPath:     &destpath,
+			},
+		}
+	}
+
+	dTaskCfg := make(map[string]interface{})
+	if step.Driver.Name == "docker" {
+		dTaskCfg["image"] = step.Driver.Container
+		dTaskCfg["entrypoint"] = []string{"/bin/sh", "/local/run.sh"}
+		dTaskCfg["work_dir"] = step.WorkDir
+
+	}
+	if step.Driver.Name == "raw_exec" {
+		dTaskCfg["command"] = step.Driver.Shell
+		dTaskCfg["args"] = step.Command
+	}
+
+	dTask.Config = dTaskCfg
+	ntg.AddTask(dTask)
+
+}
+
+// The Run action function, basically the main business logic of Paws
+func pawsrunprocess(pawfile string, action string, section string, dryrun bool) {
+
+	var Paws Paws = pawsconfig(pawfile)
 
 	log.Printf("Configuration is %#v", Paws)
-	if action == "run" {
-		localonly := false
-		log.Printf("Section is %s", section)
+	localonly := false
+	log.Printf("Section is %s", section)
 
-		var pri int
-		var region string
-		var datacenter string
+	var pri int
+	var region string
+	var datacenter string
+	pri = envpriority(Paws, "remote")
+	region = envregion(Paws, "remote")
+	datacenter = envdc(Paws, "remote")
 
-		for _, env := range Paws.Default.Environment {
-			if env.Name == "remote" {
-				pri, _ = strconv.Atoi(env.Priority)
-				region = env.Region
-				datacenter = env.Datacenter
-			}
-		}
+	if Paws.Default.LocalPath != "" {
+		localZip(Paws)
+		pri = envpriority(Paws, "local")
+		region = envregion(Paws, "local")
+		datacenter = envdc(Paws, "local")
+		localonly = true
+	}
 
-		if Paws.Default.LocalPath != "" {
-			localZip(Paws)
-			for _, env := range Paws.Default.Environment {
-				if env.Name == "local" {
-					pri, _ = strconv.Atoi(env.Priority)
-					region = env.Region
-					datacenter = env.Datacenter
+	id := uuid.New()
+	idn := fmt.Sprintf("%s-badger-paws", id.String())
+
+	nbj := nomad.NewBatchJob(idn, idn, region, pri)
+	nbj.AddDatacenter(datacenter)
+	sctp := strings.Split(section, ".")
+	var groupselect string = sctp[0]
+	var subgroupselect string = "NONE"
+	var minnumgroup int = 1
+	if len(sctp) > minnumgroup {
+		subgroupselect = sctp[1]
+
+	}
+	for _, stage := range Paws.Stage {
+		if groupselect == stage.Group {
+			if (subgroupselect == "NONE") || (subgroupselect == stage.SubGroup) {
+				groupname := fmt.Sprintf("%s.%s", stage.Group, stage.SubGroup)
+				ntg := nomad.NewTaskGroup(groupname, 1)
+				var attempts int = 0
+				ntg.ReschedulePolicy = &nomad.ReschedulePolicy{
+					Attempts: &attempts,
+				}
+				ntg.RestartPolicy = &nomad.RestartPolicy{
+					Attempts: &attempts,
+				}
+				nbj.AddTaskGroup(ntg)
+
+				for _, step := range stage.Steps {
+					addPawsTask(Paws, step, ntg, localonly)
 				}
 			}
-			localonly = true
 		}
 
-		id := uuid.New()
-		idn := fmt.Sprintf("%s-badger-paws", id.String())
+	}
 
-		nbj := nomad.NewBatchJob(idn, idn, region, pri)
-		nbj.AddDatacenter(datacenter)
-		sctp := strings.Split(section, ".")
-		var groupselect string = sctp[0]
-		var subgroupselect string = "NONE"
-		var minnumgroup int = 1
-		if len(sctp) > minnumgroup {
-			subgroupselect = sctp[1]
-
-		}
-		for _, stage := range Paws.Stage {
-			if groupselect == stage.Group {
-				if (subgroupselect == "NONE") || (subgroupselect == stage.SubGroup) {
-					groupname := fmt.Sprintf("%s.%s", stage.Group, stage.SubGroup)
-					ntg := nomad.NewTaskGroup(groupname, 1)
-					var attempts int = 0
-					ntg.ReschedulePolicy = &nomad.ReschedulePolicy{
-						Attempts: &attempts,
-					}
-					ntg.RestartPolicy = &nomad.RestartPolicy{
-						Attempts: &attempts,
-					}
-					nbj.AddTaskGroup(ntg)
-
-					for _, step := range stage.Steps {
-						dTask := nomad.NewTask(step.Name, step.Driver.Name)
-
-						if localonly {
-
-							localweb := Paws.Default.LocalWeb
-							localip := GetInternalIP(Paws.Default.LocalInterface)
-
-							source := fmt.Sprintf("%s/artifact.zip", strings.Replace(localweb, "{IP}", localip, 1))
-							var destination string = Paws.Default.PathTo
-							if step.PathTo != "" {
-								destination = step.PathTo
-							}
-							log.Printf("source: %v", source)
-							dTask.Artifacts = []*nomad.TaskArtifact{
-								&nomad.TaskArtifact{
-									GetterSource: &source,
-									RelativeDest: &destination,
-								},
-							}
-							sourcedata := strings.Join(step.Command, "\n")
-							destpath := "local/run.sh"
-							dTask.Templates = []*nomad.Template{
-								&nomad.Template{
-									EmbeddedTmpl: &sourcedata,
-									DestPath:     &destpath,
-								},
-							}
-						}
-						dTaskCfg := make(map[string]interface{})
-						if step.Driver.Name == "docker" {
-							dTaskCfg["image"] = step.Driver.Container
-							dTaskCfg["entrypoint"] = []string{"/bin/sh", "/local/run.sh"}
-							dTaskCfg["work_dir"] = step.WorkDir
-
-						}
-						if step.Driver.Name == "raw_exec" {
-							dTaskCfg["command"] = step.Driver.Shell
-							dTaskCfg["args"] = step.Command
-						}
-
-						dTask.Config = dTaskCfg
-						ntg.AddTask(dTask)
-					}
-				}
-			}
-
-		}
+	if !dryrun {
 		nClient, err := nomad.NewClient(&nomad.Config{
 			Address: os.Getenv("NOMAD_ADDR"),
 		})
@@ -224,10 +279,11 @@ func main() {
 			log.Fatalf("error with job submission: %v", err)
 		}
 	} else {
-		log.Printf("Unknown run mode")
+		log.Printf("Running job with %#v", nbj)
 	}
 }
 
+// A copy pasta function to return an IP from an interface name
 func GetInternalIP(ifname string) string {
 	itf, _ := net.InterfaceByName(ifname) //here your interface
 	item, _ := itf.Addrs()
@@ -249,6 +305,7 @@ func GetInternalIP(ifname string) string {
 	}
 }
 
+// A helper function to zip the contents of the folder paws is running in
 func localZip(Paws Paws) {
 	localzip := fmt.Sprintf("%s/artifact.zip", Paws.Default.LocalPath)
 	currentdir, err := os.Getwd()
@@ -260,6 +317,7 @@ func localZip(Paws Paws) {
 	zipit(localcode, localzip, true)
 }
 
+// A copy pasta function to zip a folder
 func zipit(source, target string, needBaseDir bool) error {
 	zipfile, err := os.Create(target)
 	if err != nil {

@@ -17,14 +17,26 @@ install nginx, docker, nomad (follow the guides)
 ```
 
 ### EXAMPLE COMMAND
+To run Paws on a example.hcl file, with anything in the group test
+```
 paws example.hcl run test
+```
+
+To validate Paws configuration example.hcl file in the group test
+
+```
+paws example.hcl valid test
+```
+
 
 ### KNOWN ISSUES
 - Haven't tested or implemented remote CI i.e. gitlab/github.
 - Environments are ignored so no filtering local/remote when running.
+- Include is limited to local filesystem only and tasks.
 
 ### EXAMPLE HCL CONFIG
 
+example.hcl
 ```
 settings {
         pathto = "/code"
@@ -47,24 +59,7 @@ settings {
 }
 
 stage "test" "formatting" {
-    step "runblack" {
-        driver "docker" {
-            container = "mercutiodesign/docker-black:latest"
-        }
-        command = ["/usr/local/bin/black ."]
-        environments = ["local","remote"]
-        pathto = "/local/code/"
-        workdir = "/local/code/index-api/"
-    }
-    step "runpylint" {
-        driver "docker" {
-            container = "cytopia/pylint:latest"
-        }
-        command = ["pylint ."]
-        environments = ["local","remote"]
-        pathto = "/local/usr/src/"
-        workdir = "/local/usr/src/index-api/"
-    }
+   include = "formatting.hcl"
 }
 
 stage "test" "testing" {
@@ -94,5 +89,28 @@ stage "test" "testing" {
 
 deployment "functest_deployment" {
     pack = "somepack.nomad"
+}
+```
+
+formatting.hcl
+```
+step "runblack" {
+        driver "docker" {
+            container = "mercutiodesign/docker-black:latest"
+        }
+        command = ["/usr/local/bin/black ."]
+        environments = ["local","remote"]
+        pathto = "/local/code/"
+        workdir = "/local/code/index-api/"
+}
+
+step "runpylint" {
+        driver "docker" {
+            container = "cytopia/pylint:latest"
+        }
+        command = ["pylint ."]
+        environments = ["local","remote"]
+        pathto = "/local/usr/src/"
+        workdir = "/local/usr/src/index-api/"
 }
 ```
